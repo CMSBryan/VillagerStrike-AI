@@ -1,29 +1,28 @@
 import os
 from dotenv import load_dotenv
 from langchain_core.tools import tool
-from langchain_deepseek import ChatDeepSeek
+# from langchain_deepseek import ChatDeepSeek
 from langchain_core.messages import ToolMessage
 from langchain_core.messages import HumanMessage
 from langchain_core.messages import AIMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 import socket
 
 load_dotenv() #pulls keys from .env into os.getenv
 
-chat_history = [HumanMessage(content="What are the open ports on the target IP?")]
-
-api_key = os.getenv("DEEPSEEK_API_KEY")
-
-#Creates 'Agent' Object with access to DeepSeek API and model, then binds tools to it for use in the loop below
-agent = ChatDeepSeek(model ="deepseek-coder", api_key=api_key)
+api_key = os.getenv("GOOGLE_API_KEY")
 
 task_completed = False
 loop_reps = 0
-chat_history = []
+
+#Prompt to the AI
+chat_history = [HumanMessage(content="What are the open ports on the target IP 192.168.1.1?")]
 
 @tool
 def run_port_scan(target_ip: str):
     """Runs a scan on the open connections or ports on target IP to find potential vulnerabilities"""
+    print(f"[*] Commencing port scan on {target_ip}...")
     #code to trigger scanner
     open_ports = []
     ports_to_check = [80, 443, 22, 21]
@@ -32,8 +31,11 @@ def run_port_scan(target_ip: str):
         sock.settimeout(1)  # Set a timeout for the connection attempt
         result = sock.connect_ex((target_ip, port))
         if result == 0:
-            open_ports.str(port)
+            open_ports.append(str(port))
         sock.close()
+    if not open_ports:
+        return f" Scan complete. No open ports found at {target_ip}."
+    
     formatted_ports = ", ".join(open_ports)
     return f"Open ports found at {target_ip}: {formatted_ports}"
 
@@ -48,6 +50,8 @@ def execute_tool(command: str):
     # Gather tools into a list
 tools = [create_task, run_port_scan, execute_tool]
 
+agent = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
+
 # Restrict agent to only use these tools
 agent_with_tools = agent.bind_tools(tools)
 
@@ -60,19 +64,23 @@ tool_map = {
     "create_task": create_task,
     "execute_tool": execute_tool}
 
+print(f"[*] Checking envelope: {chat_history}")
+
 while not task_completed and loop_reps < 10:
-    if loop_reps == 0:
-    #Ask AI what to do based off history
-        new_message = AIMessage(
-        content = "",
-        tool_calls=[{
-            "name": "run_port_scan",
-            "args": {"target_ip": "192.168.1.1"},
-            "id": "call_mock_123"
-        }]
-        )   
-    else:
-        new_message = AIMessage(content="Scan finished. Port 80 is open. What do you want to do next?")
+        # if loop_reps == 0:
+    # #Ask AI what to do based off history
+    #     new_message = AIMessage(
+    #     content = "",
+    #     tool_calls=[{
+    #         "name": "run_port_scan",
+    #         "args": {"target_ip": "192.168.1.1"},
+    #         "id": "call_mock_123"
+    #     }]
+    #     )   
+    # else:
+    #     new_message = AIMessage(content="Scan finished. Port 80 is open. What do you want to do next?")
+    print(f"[*] AI is thinking...")
+    new_message = agent_with_tools.invoke(chat_history)
     #Add thought to our history
     chat_history.append(new_message)
     #Action Step if AI wants to use a tool, we execute it and add the result to our history
@@ -89,6 +97,7 @@ while not task_completed and loop_reps < 10:
 
         #run the function with the provided arguments
         tool_result = function_to_run.invoke(tool_args)
+        print(f"[*] Tool Output: {tool_result}")
 
         #Create message that contains tool output
         observation = ToolMessage(
