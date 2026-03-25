@@ -2,9 +2,7 @@ import os
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 # from langchain_deepseek import ChatDeepSeek
-from langchain_core.messages import ToolMessage
-from langchain_core.messages import HumanMessage
-from langchain_core.messages import AIMessage
+from langchain_core.messages import ToolMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 import socket
@@ -16,8 +14,19 @@ api_key = os.getenv("GOOGLE_API_KEY")
 task_completed = False
 loop_reps = 0
 
+operator_protocol = """You are an autonomous security agent. 
+When given a primary objective by the user, you must strictly follow this workflow:
+
+1. PLANNING: Do not take immediate action. Use the `create_task` tool to break the user's objective into smaller, pending tasks.
+2. FETCHING: Use the `get_next_task` tool to pull the current 'in_progress' task from the queue.
+3. EXECUTING: Use your specific action tools (like `run_port_scan`) to complete the fetched task.
+4. COMPLETING: Once you have the observation from the action tool, use the `complete_task` tool to mark the task as done.
+5. LOOPING: Return to step 2 until the `get_next_task` tool reports no pending tasks remaining.
+"""
+user_prompt = "What are the open ports on the target IP 192.168.1.1?"
+
 #Prompt to the AI
-chat_history = [HumanMessage(content="What are the open ports on the target IP 192.168.1.1?")]
+chat_history = [SystemMessage(content=operator_protocol), HumanMessage(content=user_prompt)]
 
 @tool
 def run_port_scan(target_ip: str):
@@ -39,16 +48,54 @@ def run_port_scan(target_ip: str):
     formatted_ports = ", ".join(open_ports)
     return f"Open ports found at {target_ip}: {formatted_ports}"
 
+# We need a place to store tasks safely outside the AI's temporary chat memory
+task_queue = []
+
+
 @tool
-def create_task(objective: str):
-    """Decide on what to do with list of potential vulnerabilities from IP"""
+# Blank 2: What Python data type should we enforce for these arguments?
+def create_task(task_name: str, target_ip: str):
+    
+    # Blank 3: What must we write here so the AI 'Brain' understands this tool?
+    """Use this tool to add a new multi-step goal or action item to your pending queue. Always use this to plan your next moves before executing them."""
+    
+    new_task = {
+        "task_name": task_name,
+        "target_ip": target_ip,
+        "status": "pending"
+    }
+    
+    # Blank 4: What standard Python method adds our dictionary to the queue list?
+    task_queue.append(new_task)
+    
+    return f"Success: Task '{task_name}' added to queue."
+
+@tool
+def get_next_task():
+    """Fetches the next pending task from the task queue to execute."""
+    
+    for task in task_queue:
+        if task["status"] == "pending":
+            task["status"] = "in_progress"
+            return f"Next task: {task['task_name']} on target {task['target_ip']}"
+            
+    return "[*] No pending tasks remaining."
+
+@tool
+def complete_task(task_name: str):
+    """Checks off completed tasks from the task queue."""
+    for task in task_queue:
+        if task["task_name"] == task_name:
+            task["status"] = "completed"
+            return f"{task['task_name']} on target {task['target_ip']} completed."
+    return f"[*] Task '{task_name}' not found in queue."
 
 @tool
 def execute_tool(command: str):
     """Execute necessary tool for based off decisions to fulfil task"""
 
     # Gather tools into a list
-tools = [create_task, run_port_scan, execute_tool]
+tools = [create_task, get_next_task, run_port_scan, complete_task, execute_tool]
 
 agent = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
 
@@ -62,6 +109,8 @@ if api_key == None:
 tool_map = {
     "run_port_scan": run_port_scan,
     "create_task": create_task,
+    "get_next_task": get_next_task,
+    "complete_task": complete_task,
     "execute_tool": execute_tool}
 
 print(f"[*] Checking envelope: {chat_history}")
@@ -92,8 +141,8 @@ while not task_completed and loop_reps < 10:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
 
-        # Look up the function in our map
-        function_to_run = tool_map[tool_name]
+        # Look up the function in our map, use .get to catch any errors if the AI tries to call a tool we don't have
+        function_to_run = tool_map.get(tool_name)
 
         #run the function with the provided arguments
         tool_result = function_to_run.invoke(tool_args)
