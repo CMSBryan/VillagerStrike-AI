@@ -1,4 +1,5 @@
 import os
+import ipaddress
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 # from langchain_deepseek import ChatDeepSeek
@@ -14,16 +15,18 @@ api_key = os.getenv("GOOGLE_API_KEY")
 task_completed = False
 loop_reps = 0
 
+
 operator_protocol = """You are an autonomous security agent. 
 When given a primary objective by the user, you must strictly follow this workflow:
 
-1. PLANNING: Do not take immediate action. Use the `create_task` tool to break the user's objective into smaller, pending tasks.
-2. FETCHING: Use the `get_next_task` tool to pull the current 'in_progress' task from the queue.
-3. EXECUTING: Use your specific action tools (like `run_port_scan`) to complete the fetched task.
-4. COMPLETING: Once you have the observation from the action tool, use the `complete_task` tool to mark the task as done.
-5. LOOPING: Return to step 2 until the `get_next_task` tool reports no pending tasks remaining.
+1. DISCOVERY: Use the `discover_hosts` tool if the user provides a range (CIDR) to find active hosts. This will add new tasks to your queue for each discovered host.
+2. PLANNING: Do not take immediate action. Use the `create_task` tool to break the user's objective into smaller, pending tasks.
+3. FETCHING: Use the `get_next_task` tool to pull the current 'in_progress' task from the queue.
+4. EXECUTING: Use your specific action tools (like `run_port_scan`) to complete the fetched task.
+5. COMPLETING: Once you have the observation from the action tool, use the `complete_task` tool to mark the task as done.
+6. LOOPING: Return to step 2 until the `get_next_task` tool reports no pending tasks remaining.
 """
-user_prompt = "What are the open ports on the target IP 192.168.1.1?"
+user_prompt = """What are the open ports on the target IP 192.168.1.1/29?"""
 
 #Prompt to the AI
 chat_history = [SystemMessage(content=operator_protocol), HumanMessage(content=user_prompt)]
@@ -51,7 +54,6 @@ def run_port_scan(target_ip: str):
 # We need a place to store tasks safely outside the AI's temporary chat memory
 task_queue = []
 
-
 @tool
 # Blank 2: What Python data type should we enforce for these arguments?
 def create_task(task_name: str, target_ip: str):
@@ -65,7 +67,7 @@ def create_task(task_name: str, target_ip: str):
         "status": "pending"
     }
     
-    # Blank 4: What standard Python method adds our dictionary to the queue list?
+    #adds our dictionary to the queue list?
     task_queue.append(new_task)
     
     return f"Success: Task '{task_name}' added to queue."
@@ -94,8 +96,25 @@ def complete_task(task_name: str):
 def execute_tool(command: str):
     """Execute necessary tool for based off decisions to fulfil task"""
 
+#create IPv4Network object to validate IP addresses. /24 means we are looking at a subnet mask of 255.255.255.0, which allows for 256 total addresses. /32 means we are looking at a single IP address.
+@tool
+def discover_hosts(cidr_range: str):
+    """Expands a CIDR range to find active hosts in range and adds them to the task queue for scanning."""
+    try:
+        network = ipaddress.IPv4Network(cidr_range)
+        hosts_added = 0
+        for ip in network.hosts():
+            # Here we could add a quick ping check to see if the host is active before adding to the queue
+            #change ip address into string
+            ip_str = str(ip)
+            create_task(task_name=f"Port scan on {ip_str}", target_ip=ip_str)
+            hosts_added += 1
+        return f"Discovery complete. {hosts_added} hosts added to task queue for scanning."
+    except Exception as e:
+        return f"Error: Invalid CIDR range provided. Please provide a valid range like '192.168.1.0/24'"
+
     # Gather tools into a list
-tools = [create_task, get_next_task, run_port_scan, complete_task, execute_tool]
+tools = [create_task, get_next_task, run_port_scan, complete_task, execute_tool, discover_hosts]
 
 agent = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
 
@@ -111,7 +130,8 @@ tool_map = {
     "create_task": create_task,
     "get_next_task": get_next_task,
     "complete_task": complete_task,
-    "execute_tool": execute_tool}
+    "execute_tool": execute_tool,
+    "discover_hosts": discover_hosts}
 
 print(f"[*] Checking envelope: {chat_history}")
 
@@ -158,7 +178,15 @@ while not task_completed and loop_reps < 10:
         chat_history.append(observation) 
 
     else:
-        print(f"Loop {loop_reps}: AI says: {new_message.content}")
+        # Check if content is a list (standard for newer Gemini models)
+        if isinstance(new_message.content, list):
+            # Extract text from the first content block
+            final_text = new_message.content[0].get('text', '')
+        else:
+            # Fallback if it's already a string
+            final_text = new_message.content
+            
+        print(f"Loop {loop_reps}: AI says: {final_text}")
         task_completed = True
     loop_reps += 1
 
