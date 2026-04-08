@@ -30,7 +30,7 @@ CRITICAL RULES:
 5. COMPLETING: Once you have the observation from the action tool, use the `complete_task` tool to mark the task as done.
 6. LOOPING: Return to step 2 until the `get_next_task` tool reports no pending tasks remaining.
 """
-user_prompt = """<request>What are the open ports on the target IP 192.168.1.1/29?</request>"""
+user_prompt = """<request>What are the open ports on the target IP 127.0.0.1?</request>"""
 
 #Prompt to the AI
 chat_history = [SystemMessage(content=operator_protocol), HumanMessage(content=user_prompt)]
@@ -41,11 +41,11 @@ def run_port_scan(target_ip: str):
     print(f"[*] Commencing port scan on {target_ip}...")
     #code to trigger scanner
     open_ports = []
-    ports_to_check = [80, 443, 22, 21]
+    ports_to_check = [8080]
     for port in ports_to_check:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #create a TCP socket so client and server can establish a connection and exchange data. AF_INET means we are using IPv4 addresses, SOCK_STREAM means we are using TCP protocol.
         sock.settimeout(1)  # Set a timeout for the connection attempt
-        result = sock.connect_ex((target_ip, port))
+        result = sock.connect_ex((target_ip, port)) #sock.connect_ex raises error code compared to sock.connect which raises an exception. We want to avoid exceptions for closed ports and just get a result code.
         if result == 0:
             open_ports.append(str(port))
         sock.close()
