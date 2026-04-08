@@ -14,4 +14,4 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         conn, addr = s.accept()
         with conn:
             print(f"[!] Connection received from {addr}")
-            conn.sendall(b"Hello from the dummy server!")
+            conn.sendall(b"HTTP/1.1 200 OK\r\nServer: Apache/2.4.49 (Unix)\r\nContent-Type: text/plain\r\n\r\nHello from the dummy server!")

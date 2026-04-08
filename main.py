@@ -7,6 +7,7 @@ from langchain_core.messages import ToolMessage, HumanMessage, AIMessage, System
 from langchain_google_genai import ChatGoogleGenerativeAI
 import time
 import socket
+import nmap
 
 load_dotenv() #pulls keys from .env into os.getenv
 
@@ -39,21 +40,15 @@ chat_history = [SystemMessage(content=operator_protocol), HumanMessage(content=u
 def run_port_scan(target_ip: str):
     """Runs a scan on the open connections or ports on target IP to find potential vulnerabilities"""
     print(f"[*] Commencing port scan on {target_ip}...")
-    #code to trigger scanner
-    open_ports = []
-    ports_to_check = [8080]
-    for port in ports_to_check:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #create a TCP socket so client and server can establish a connection and exchange data. AF_INET means we are using IPv4 addresses, SOCK_STREAM means we are using TCP protocol.
-        sock.settimeout(1)  # Set a timeout for the connection attempt
-        result = sock.connect_ex((target_ip, port)) #sock.connect_ex raises error code compared to sock.connect which raises an exception. We want to avoid exceptions for closed ports and just get a result code.
-        if result == 0:
-            open_ports.append(str(port))
-        sock.close()
-    if not open_ports:
-        return f" Scan complete. No open ports found at {target_ip}."
-    
-    formatted_ports = ", ".join(open_ports)
-    return f"Open ports found at {target_ip}: {formatted_ports}"
+    nm = nmap.PortScanner() #create nmap object to run scans
+    results = nm.scan(hosts=target_ip, arguments='-p 8080 -sV -O') #run nmap scan on target IP for port 8080 and service version detection (-sV). This will give us information about the service running on that port, which can help identify vulnerabilities. -O enables OS detection, which can also provide valuable information for vulnerability assessment.
+    scan_data = results['scan'].get(target_ip, {})
+    port_data = scan_data.get('tcp', {}).get(8080, {})
+    os_list = scan_data.get('osmatch', [])
+    os_match = os_list[0].get('name', 'unknown') if os_list else 'unknown'
+    data = f"Name: {port_data.get('name', 'unknown')}, Version: {port_data.get('version', 'unknown')}, State: {port_data.get('state', 'unknown')}, OS: {os_match}, Product: {port_data.get('product', 'unknown')}"
+
+    return f"Open ports found at {target_ip}: {data}"
 
 # We need a place to store tasks safely outside the AI's temporary chat memory
 task_queue = []
@@ -120,7 +115,7 @@ def discover_hosts(cidr_range: str):
     # Gather tools into a list
 tools = [create_task, get_next_task, run_port_scan, complete_task, execute_tool, discover_hosts]
 
-agent = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
+agent = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite-preview", google_api_key=api_key)
 
 # Restrict agent to only use these tools
 agent_with_tools = agent.bind_tools(tools)
